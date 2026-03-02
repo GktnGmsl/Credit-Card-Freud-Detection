@@ -68,13 +68,13 @@ python mlflow_tracking.py
 cd "proje_dizini"
 mlflow ui
 ```
-Tarayıcıdan [http://127.0.0.1:5000](http://127.0.0.1:5000) adresine gidin.
+Tarayıcıdan [http://127.0.0.1:5000](http://127.0.0.1:5000) adresine gidin. Ya da kendi ayarladığınız bir local adrese.
 
 ## MLflow UI Ekran Görüntüsü
 
 > `mlflow ui` komutunu çalıştırdıktan sonra ekran görüntüsünü buraya ekleyin.
 
-![MLflow UI](outputs/mlflow_ui_screenshot.png)
+![MLflow UI](image.png)
 
 ## Veri Seti
 
