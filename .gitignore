@@ -1,14 +1,14 @@
-# Data Files
+# ── Data ────────────────────────────────────────────────────────────
 Data/
 data/
 *.csv
 *.parquet
 
-# Jupyter Notebook
+# ── Jupyter ──────────────────────────────────────────────────────────
 .ipynb_checkpoints/
 *.ipynb_checkpoints
 
-# Python
+# ── Python ───────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
@@ -30,24 +30,63 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual Environments
+# ── Virtual Environments ─────────────────────────────────────────────
 venv/
 env/
 ENV/
 env.bak/
 venv.bak/
+.conda/
 
-# IDE
+# ── IDE ──────────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 .DS_Store
+Thumbs.db
 
-# Environment Variables
+# ── Environment Variables ────────────────────────────────────────────
 .env
 .env.local
+*.env
+
+# ── MLflow ───────────────────────────────────────────────────────────
+mlruns/
+mlartifacts/
+.mlflow/
+
+# ── Model Artifacts & Outputs ────────────────────────────────────────
+outputs/
+*.joblib
+*.pkl
+*.pickle
+*.h5
+*.pt
+*.pth
+*.onnx
+
+# ── Logs ─────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Optuna ───────────────────────────────────────────────────────────
+optuna_studies/
+*.db
+
+# ── Testing ──────────────────────────────────────────────────────────
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# ── OS ───────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+[Dd]esktop.ini
+$RECYCLE.BIN/
 
 # OS
 Thumbs.db
