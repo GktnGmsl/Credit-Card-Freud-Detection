@@ -67,6 +67,9 @@ outputs/
 *.pth
 *.onnx
 
+# ── API ──────────────────────────────────────────────────────────────
+api/__pycache__/
+
 # ── Logs ─────────────────────────────────────────────────────────────
 *.log
 logs/
@@ -87,7 +90,4 @@ coverage.xml
 .LSOverride
 [Dd]esktop.ini
 $RECYCLE.BIN/
-
-# OS
 Thumbs.db
-.DS_Store
