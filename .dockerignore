@@ -1,0 +1,41 @@
+# ── Docker ignore ──────────────────────────────────────────────────
+# Keeps images small by excluding unnecessary files.
+
+# Version control
+.git
+.gitignore
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Notebooks (not needed in containers)
+*.ipynb
+
+# Raw data (150 MB — only processed data is needed)
+Data/creditcard.csv
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Docker files (avoid recursive context)
+Dockerfile.*
+docker-compose.yml
+.dockerignore

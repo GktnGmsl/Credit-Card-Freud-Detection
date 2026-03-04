@@ -84,6 +84,12 @@ htmlcov/
 .coverage
 coverage.xml
 
+# ── Docker ───────────────────────────────────────────────────────────
+# Docker image build cache (keep Dockerfile*, docker-compose.yml tracked)
+
+# ── Streamlit ────────────────────────────────────────────────────────
+.streamlit/
+
 # ── OS ───────────────────────────────────────────────────────────────
 .DS_Store
 .AppleDouble

@@ -1,0 +1,38 @@
+# ── Dashboard Dockerfile ───────────────────────────────────────────
+# Serves the Streamlit monitoring dashboard.
+#
+# Build:  docker build -f Dockerfile.dashboard -t fraud-dashboard .
+# Run:    docker run -p 8501:8501 -e API_URL=http://localhost:8000 fraud-dashboard
+# ───────────────────────────────────────────────────────────────────
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# System deps
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc g++ && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Python deps
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy dashboard code
+COPY dashboard/ dashboard/
+
+# Copy outputs (CSV metrics + plot PNGs + model for SHAP)
+COPY outputs/ outputs/
+
+# Copy test data (for SHAP sampling + live panel sample data)
+COPY Data/processed/test.parquet Data/processed/test.parquet
+
+# Default API URL (overridden by docker-compose)
+ENV API_URL=http://api:8000
+
+EXPOSE 8501
+
+CMD ["streamlit", "run", "dashboard/app.py", \
+     "--server.port=8501", \
+     "--server.address=0.0.0.0", \
+     "--server.headless=true"]
