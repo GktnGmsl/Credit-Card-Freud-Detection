@@ -15,8 +15,8 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Python deps
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements-dashboard.txt .
+RUN pip install --no-cache-dir -r requirements-dashboard.txt
 
 # Copy dashboard code
 COPY dashboard/ dashboard/
@@ -26,6 +26,9 @@ COPY outputs/ outputs/
 
 # Copy test data (for SHAP sampling + live panel sample data)
 COPY Data/processed/test.parquet Data/processed/test.parquet
+
+# Copy MLflow registry data (for dynamic version display)
+COPY mlruns/ mlruns/
 
 # Default API URL (overridden by docker-compose)
 ENV API_URL=http://api:8000

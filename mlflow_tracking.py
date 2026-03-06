@@ -13,6 +13,7 @@ Usage:
 
 import os
 import sys
+import json
 import warnings
 import numpy as np
 import pandas as pd
@@ -49,14 +50,7 @@ if BASE_DIR not in sys.path:
 
 from training import (
     load_data,
-    compute_roc_pr,
     find_best_threshold,
-    plot_confusion_matrices,
-    train_logistic_regression_with_loss,
-    train_random_forest_with_loss,
-    train_xgboost_with_loss,
-    run_optuna_optimization,
-    train_optimized_model,
 )
 
 
@@ -146,29 +140,30 @@ def main():
     print("="*60)
     X_train, y_train, X_val, y_val, X_test, y_test, features = load_data()
 
-    # ── Train models ──────────────────────────────────────────────────
+    # ── Load pre-trained models ───────────────────────────────────────
     print("\n" + "="*60)
-    print("  TRAINING MODELS")
+    print("  LOADING PRE-TRAINED MODELS")
     print("="*60)
 
-    print("\n[1/3] Training Logistic Regression...")
-    lr_model, _ = train_logistic_regression_with_loss(
-        X_train, y_train, X_val, y_val, X_test, y_test)
+    MODEL_DIR = os.path.join(OUTPUT_DIR, "models")
+    lr_model = joblib.load(os.path.join(MODEL_DIR, "logistic_regression.joblib"))
+    rf_model = joblib.load(os.path.join(MODEL_DIR, "random_forest.joblib"))
+    xgb_model = joblib.load(os.path.join(MODEL_DIR, "xgboost.joblib"))
+    optimized_model = joblib.load(os.path.join(MODEL_DIR, "optimized_model.joblib"))
 
-    print("[2/3] Training Random Forest...")
-    rf_model, _ = train_random_forest_with_loss(
-        X_train, y_train, X_val, y_val, X_test, y_test)
+    with open(os.path.join(MODEL_DIR, "model_config.json")) as f:
+        model_config = json.load(f)
 
-    print("[3/3] Training XGBoost...")
-    xgb_model, _ = train_xgboost_with_loss(
-        X_train, y_train, X_val, y_val, X_test, y_test)
+    best_name = model_config["best_model"].replace(" ", "_")
+    print(f"  Loaded 4 models from {MODEL_DIR}")
+    print(f"  Best model: {best_name}")
 
     # ── Log models to MLflow ──────────────────────────────────────────
     print("\n" + "="*60)
     print("  LOGGING TO MLFLOW")
     print("="*60)
 
-    lr_params = {"solver": "saga", "max_iter": 1000, "C": 1.0, "random_state": 42}
+    lr_params = {"solver": "saga", "max_iter": 200, "C": 1.0, "random_state": 42}
     rf_params = {"n_estimators": 200, "oob_score": True, "random_state": 42,
                  "n_jobs": -1}
     xgb_params = {"n_estimators": 200, "max_depth": 6, "learning_rate": 0.1,
@@ -181,41 +176,10 @@ def main():
     log_model_run(xgb_model, "XGBoost", xgb_params,
                   X_val, y_val, X_test, y_test)
 
-    # ── Determine best model by PR-AUC ────────────────────────────────
-    models_eval = {
-        "XGBoost": (xgb_model, xgb_params),
-        "Random_Forest": (rf_model, rf_params),
-        "Logistic_Regression": (lr_model, lr_params),
-    }
-    pr_aucs = {}
-    for name, (model, _) in models_eval.items():
-        y_proba = model.predict_proba(X_test)[:, 1]
-        pr_aucs[name] = average_precision_score(y_test, y_proba)
-
-    best_name = max(pr_aucs, key=pr_aucs.get)
-    print(f"\n  Best baseline model: {best_name} (PR-AUC = {pr_aucs[best_name]:.4f})")
-
-    # ── Optuna optimization ───────────────────────────────────────────
-    print("\n" + "="*60)
-    print("  OPTUNA OPTIMIZATION")
-    print("="*60)
-
-    # Map internal names
-    optuna_name_map = {
-        "XGBoost": "XGBoost",
-        "Random_Forest": "Random Forest",
-        "Logistic_Regression": "Logistic Regression",
-    }
-    study = run_optuna_optimization(optuna_name_map[best_name],
-                                    X_train, y_train, X_val, y_val, n_trials=30)
-
-    optimized_model = train_optimized_model(optuna_name_map[best_name],
-                                            study.best_params,
-                                            X_train, y_train)
-
     # Log optimized model
     print("\n  Logging optimized model...")
-    opt_run_id = log_model_run(optimized_model, best_name, study.best_params,
+    opt_params = model_config.get("best_params", {})
+    opt_run_id = log_model_run(optimized_model, best_name, opt_params,
                                X_val, y_val, X_test, y_test, is_optimized=True)
 
     # ── Register best model ───────────────────────────────────────────

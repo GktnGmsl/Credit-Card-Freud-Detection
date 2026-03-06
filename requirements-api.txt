@@ -1,0 +1,19 @@
+# Core
+numpy>=2.0
+pandas>=2.0
+scikit-learn>=1.5
+pyarrow>=15.0
+
+# Models (needed for loading saved xgboost models)
+xgboost>=2.0
+
+# Tracking (MLflow model registry loading)
+mlflow>=2.10
+
+# API
+fastapi>=0.110
+uvicorn>=0.30
+pydantic>=2.0
+
+# Serialization
+joblib>=1.3

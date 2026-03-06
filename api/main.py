@@ -10,6 +10,7 @@ Run:
 """
 
 import os
+import json
 import time
 import logging
 from collections import defaultdict
@@ -33,8 +34,8 @@ DATA_DIR = os.path.join(BASE_DIR, "Data", "processed")
 MODEL_DIR = os.path.join(BASE_DIR, "outputs", "models")
 MLRUNS_DIR = os.path.join(BASE_DIR, "mlruns")
 
-BEST_THRESHOLD = 0.46
-MODEL_VERSION = "1.0"
+BEST_THRESHOLD = 0.5  # Default; loaded from model_config.json at startup
+MODEL_VERSION = "unknown"  # Resolved dynamically from MLflow registry at startup
 REGISTRY_NAME = "CreditCardFraudDetector"
 
 COLS_TO_SCALE = [
@@ -57,6 +58,10 @@ RATE_LIMIT_MAX = 100
 RATE_LIMIT_WINDOW = 60  # seconds
 
 logger = logging.getLogger("fraud_api")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
 # ──────────────────────────────────────────────────────────────────────
 # Global state (populated at startup)
@@ -107,6 +112,34 @@ def fit_scaler() -> StandardScaler:
     joblib.dump(s, scaler_path)
     logger.info("Scaler fitted and saved to %s", scaler_path)
     return s
+
+
+def load_model_config() -> dict:
+    """Load model config (threshold, best model info, registry version)."""
+    config_path = os.path.join(MODEL_DIR, "model_config.json")
+    if os.path.exists(config_path):
+        with open(config_path) as f:
+            config = json.load(f)
+        logger.info("Model config loaded from %s", config_path)
+        return config
+    logger.warning("model_config.json not found, using defaults")
+    return {}
+
+
+def load_registry_version() -> str:
+    """Load the current production model version from MLflow registry."""
+    try:
+        import mlflow  # type: ignore
+        tracking_uri = f"file:///{MLRUNS_DIR.replace(os.sep, '/')}"
+        mlflow.set_tracking_uri(tracking_uri)
+        client = mlflow.tracking.MlflowClient()
+        mv = client.get_model_version_by_alias(REGISTRY_NAME, "production")
+        version = str(mv.version)
+        logger.info("MLflow registry production version: %s", version)
+        return version
+    except Exception as exc:
+        logger.warning("Could not read MLflow registry version: %s", exc)
+        return MODEL_VERSION
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -165,11 +198,19 @@ def check_rate_limit(client_ip: str) -> bool:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load model and scaler at startup."""
-    global model, scaler
+    """Load model, scaler, threshold, and version at startup."""
+    global model, scaler, BEST_THRESHOLD, MODEL_VERSION
     model = load_model()
     scaler = fit_scaler()
-    logger.info("API ready — model and scaler loaded.")
+
+    config = load_model_config()
+    BEST_THRESHOLD = float(config.get("best_threshold", 0.5))
+    MODEL_VERSION = load_registry_version()
+
+    logger.info(
+        "API ready — model v%s, threshold %.4f loaded.",
+        MODEL_VERSION, BEST_THRESHOLD,
+    )
     yield
 
 
@@ -218,6 +259,9 @@ async def predict(body: PredictRequest):
     Accepts raw transaction features (V1-V28, Amount, Time).
     Returns fraud probability, binary decision, and risk level.
     """
+    if model is None or scaler is None:
+        raise HTTPException(status_code=503, detail="Model or scaler not loaded yet.")
+
     raw_features = body.features.model_dump()
 
     # Engineer features + scale

@@ -25,6 +25,10 @@ env/
 # Raw data (150 MB — only processed data is needed)
 Data/creditcard.csv
 
+# Training script (not needed in containers)
+training.py
+mlflow_tracking.py
+
 # IDE / editor
 .vscode/
 .idea/

@@ -55,7 +55,7 @@ Kredi kartı dolandırıcılık tespiti projesi. PCA ile dönüştürülmüş **
 ├── preprocessing.ipynb               # Veri ön işleme (Feature Engineering, SMOTE, Scaling)
 ├── model_comparison.ipynb            # Model eğitimi ve karşılaştırma notebook'u
 ├── explainability.ipynb              # SHAP tabanlı model açıklanabilirliği
-├── training.py                       # Eğitim/değerlendirme yardımcı fonksiyonlar
+├── training.py                       # Eğitim/değerlendirme/Optuna optimizasyon pipeline
 ├── mlflow_tracking.py                # MLflow experiment tracking & model registry
 ├── api/
 │   ├── __init__.py
@@ -64,19 +64,21 @@ Kredi kartı dolandırıcılık tespiti projesi. PCA ile dönüştürülmüş **
 ├── dashboard/
 │   └── app.py                        # Streamlit monitoring dashboard
 ├── outputs/                          # Grafikler ve kaydedilmiş modeller
-│   ├── models/                       # Joblib model dosyaları + scaler
+│   ├── models/                       # Joblib model dosyaları + scaler + model_config.json
 │   ├── cm_*.png                      # Confusion matrix görselleri
 │   ├── roc_*.png / pr_*.png          # ROC & PR eğri görselleri
-│   ├── loss_*.png                    # Loss curve görselleri
-│   ├── optuna_history.png            # Optuna optimizasyon geçmişi
+│   ├── loss_*.png                    # Loss curve görselleri (train + validation)
 │   ├── model_comparison.csv          # 3 baseline model metrikleri
 │   └── final_comparison.csv          # 4 model metrikleri (optimized dahil)
-├── mlruns/                           # MLflow tracking verileri
+├── mlruns/                           # MLflow tracking verileri & model registry
 ├── Dockerfile.api                    # API Docker image
 ├── Dockerfile.dashboard              # Dashboard Docker image
 ├── docker-compose.yml                # Çoklu servis orkestrasyon
 ├── .dockerignore                     # Docker build exclusions
-├── requirements.txt                  # Python bağımlılıkları
+├── .vscode/settings.json             # VS Code ayarları (Python interpreter)
+├── requirements.txt                  # Tüm Python bağımlılıkları
+├── requirements-api.txt              # API için minimal bağımlılıklar
+├── requirements-dashboard.txt        # Dashboard için minimal bağımlılıklar
 └── README.md
 ```
 
@@ -86,10 +88,18 @@ Kredi kartı dolandırıcılık tespiti projesi. PCA ile dönüştürülmüş **
 
 | Model | Açıklama |
 |-------|----------|
-| Logistic Regression | Baseline model, saga solver, C=1.0, max_iter=1000 |
+| Logistic Regression | Baseline model, saga solver, C=1.0, max_iter=200 |
 | Random Forest | 200 trees, OOB score, en iyi baseline (PR-AUC: 0.8449) |
 | XGBoost | max_depth=6, 200 boosting rounds, logloss objective |
-| Random Forest (Optimized) | Optuna ile 30 trial Bayesian optimizasyon, PR-AUC maximization |
+| Random Forest (Optimized) | Optuna + **Stratified 5-Fold CV**, 50 trial, PR-AUC maximization |
+
+### Optuna Hiperparametre Optimizasyonu
+
+- **Değerlendirme:** Stratified 5-Fold CV (`train_original.parquet` üzerinde, her fold ~370 fraud örneği)
+- **Arama alanı:** max_depth ∈ {None, 10, 20, 30, 40, 50}, n_estimators ∈ [100, 500], min_samples_split ∈ [2, 15], min_samples_leaf ∈ [1, 8]
+- **Trial sayisi:** 50 (timeout: 60 dk)
+- **Objective:** Ortalama PR-AUC (5-fold)
+- **Sonuç:** max_depth=30, n_estimators=403, min_samples_split=11, min_samples_leaf=1, max_features=sqrt
 
 ---
 
@@ -100,9 +110,9 @@ Kredi kartı dolandırıcılık tespiti projesi. PCA ile dönüştürülmüş **
 | Logistic Regression | 0.9767 | 0.7902 | 0.9762 | 0.0597 | 0.8649 | 0.1117 | 0.99 |
 | Random Forest | 0.9754 | 0.8449 | 0.9995 | 0.9077 | 0.7973 | 0.8489 | 0.51 |
 | XGBoost | 0.9681 | 0.8280 | 0.9991 | 0.7229 | 0.8108 | 0.7643 | 0.94 |
-| **RF (Optimized)** 🏆 | **0.9802** | **0.8422** | **0.9995** | **0.9077** | **0.7973** | **0.8489** | **0.46** |
+| **RF (Optimized)** 🏆 | **0.9807** | **0.8409** | **0.9995** | **0.8824** | **0.8108** | **0.8451** | **0.52** |
 
-> **Not:** PR-AUC, dengesiz veri setleri için ROC-AUC'den daha bilgilendiricidir. Optimized RF modeli en yüksek ROC-AUC'ye (0.9802) sahiptir ve threshold optimizasyonu ile F1 skoru 0.8531'e ulaşmıştır.
+> **Not:** PR-AUC, dengesiz veri setleri için ROC-AUC'den daha bilgilendiricidir. Optimized RF modeli en yüksek ROC-AUC'ye (0.9807) sahiptir ve Stratified 5-Fold CV ile daha güvenilir hiperparametre seçimi yapılmıştır. Threshold optimizasyonu ile F1 skoru 0.8511'e ulaşmıştır.
 
 ---
 
@@ -110,10 +120,11 @@ Kredi kartı dolandırıcılık tespiti projesi. PCA ile dönüştürülmüş **
 
 - Confusion Matrix (validation + test ayrı ayrı)
 - Classification Report (precision, recall, F1 — fraud sınıfı odaklı)
-- Loss Curves (train/validation/test)
+- Loss Curves (train + validation)
 - ROC-AUC Curve
 - Precision-Recall Curve (imbalanced data için daha bilgilendirici)
 - Threshold Optimization (F1-maximizing threshold)
+- Stratified 5-Fold CV (Optuna hiperparametre seçimi için)
 
 ---
 
@@ -185,11 +196,11 @@ streamlit run dashboard/app.py
 Tarayıcıdan [http://localhost:8501](http://localhost:8501) adresine gidin.
 
 Dashboard bölümleri:
-- **Model Metrikleri** — AUC, Precision, Recall, F1 kartları
+- **Model Metrikleri** — AUC, Precision, Recall, F1 kartları + MLflow registry versiyon, threshold, optimized params gösterimi
 - **Confusion Matrix** — Model seçerek confusion matrix görseli
 - **ROC & PR Eğrileri** — Birleşik ve bireysel eğri grafikleri
 - **SHAP Feature Importance** — Global bar plot + beeswarm plot
-- **Canlı Test Paneli** — Değer girerek API'ye istek gönderme
+- **Canlı Test Paneli** — Değer girerek API'ye istek gönderme (model versiyonu + threshold otomatik gösterilir)
 
 ---
 
@@ -208,7 +219,7 @@ Dashboard bölümleri:
 curl http://localhost:8000/health
 ```
 ```json
-{"status": "ok", "model_version": "1.0"}
+{"status": "ok", "model_version": "4"}
 ```
 
 **Fraud Tahmini:**
@@ -247,12 +258,15 @@ Veri seti aşırı dengesizdir (%0.172 fraud). Modeller eğitim sırasında azı
 ### Neden Optuna ile Bayesian Optimizasyon?
 Grid/random search yerine **Optuna** kullanılmasının sebebi:
 - Bayesian optimizasyon, hiperparametre uzayını daha verimli araştırır
-- 30 trial ile yeterli yakınsama sağlanmıştır
+- **Stratified 5-Fold CV** ile `train_original.parquet` üzerinde değerlendirme yapılır (her fold ~370 fraud örneği — tek val split'teki 74'ten 5x fazla)
+- SMOTE verisi yerine orijinal veri kullanılır — sentetik örneklerin hem train hem val fold'una düşmesi engellenir
+- 50 trial ile yeterli yakınsama sağlanmıştır (timeout: 60 dk)
 - PR-AUC objective ile dengesiz veri senaryosu için optimize edilmiştir
-- Sonuç: ROC-AUC 0.9754 → **0.9802** yükselmiştir
+- `max_depth` arama alanı: {None, 10, 20, 30, 40, 50} — sınırsız derinlik de denenir
+- Sonuç: ROC-AUC 0.9754 → **0.9807** yükselmiştir
 
-### Neden Threshold = 0.46?
-Varsayılan 0.50 threshold yerine, F1-maximizing threshold aranmıştır. Optimized RF için **0.46** değeri F1 skorunu **0.8531**'e yükseltmiştir. Düşük threshold ≠ daha fazla false positive; bu değer precision-recall trade-off'unun optimal noktasıdır.
+### Neden Threshold = 0.52?
+Varsayılan 0.50 threshold yerine, F1-maximizing threshold aranmıştır. Optimized RF için **0.52** değeri precision-recall trade-off'unun optimal noktasıdır. Threshold, `model_config.json` dosyasına kaydedilir ve API startup'ta dinamik olarak yüklenir.
 
 ### Neden SHAP?
 - Tree-based modeller için `TreeExplainer` kullanarak **kesin SHAP değerleri** hesaplanabilir (yaklaşık değil)
@@ -262,8 +276,16 @@ Varsayılan 0.50 threshold yerine, F1-maximizing threshold aranmıştır. Optimi
 
 ### Docker Mimarisi
 - **Ayrı Dockerfile'lar**: API ve Dashboard bağımsız scale edilebilir
+- **Ayrı requirements**: `requirements-api.txt` ve `requirements-dashboard.txt` ile minimal Docker image boyutu
 - **docker-compose**: Tek komutla tüm servisler ayağa kalkar; Dashboard health-check ile API'nin hazır olmasını bekler
 - **Ham veri hariç**: `.dockerignore` ile 150MB'lık `creditcard.csv` image'dan çıkarılmış, sadece processed parquet dosyaları dahil edilmiştir
+- **MLflow registry**: Her iki container'a `mlruns/` kopyalanır — model versiyonu dinamik olarak okunur
+
+### Dinamik Versiyon Yönetimi
+- `training.py` çalıştırıldığında modeller + `model_config.json` (threshold, best_params) diske kaydedilir
+- `mlflow_tracking.py` çalıştırıldığında yeni bir MLflow registry versiyonu oluşturulur ve `production` alias güncellenir
+- API ve Dashboard startup'ta MLflow registry'den güncel versiyonu ve `model_config.json`'dan threshold'u otomatik yükler
+- Hiçbir hardcoded versiyon veya threshold yoktur
 
 ---
 

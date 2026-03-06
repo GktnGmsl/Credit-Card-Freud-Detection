@@ -1,0 +1,6 @@
+{
+    "python.defaultInterpreterPath": "C:\\Users\\gktng\\miniconda3\\python.exe",
+    "files.associations": {
+        "mlruns/**/meta.yaml": "plaintext"
+    }
+}

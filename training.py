@@ -11,6 +11,8 @@ import os
 import warnings
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -21,6 +23,9 @@ from sklearn.metrics import (
     roc_curve, auc, precision_recall_curve, average_precision_score,
     f1_score, log_loss, roc_auc_score
 )
+from sklearn.model_selection import StratifiedKFold
+import joblib
+import json
 import xgboost as xgb  # type: ignore
 import optuna  # type: ignore
 
@@ -147,11 +152,10 @@ def plot_f1_vs_threshold(thresholds, f1_scores, best_threshold, best_f1,
 # 3. LOSS CURVES
 # ──────────────────────────────────────────────────────────────────────
 
-def train_logistic_regression_with_loss(X_train, y_train, X_val, y_val,
-                                        X_test, y_test):
+def train_logistic_regression_with_loss(X_train, y_train, X_val, y_val):
     """Train LR incrementally and record log_loss at each checkpoint."""
     checkpoints = [5, 10, 25, 50, 100, 200]
-    losses = {"train": [], "val": [], "test": [], "iters": []}
+    losses = {"train": [], "val": [], "iters": []}
 
     lr_model = LogisticRegression(
         solver="saga", max_iter=5, warm_start=True, random_state=42, C=1.0
@@ -162,8 +166,7 @@ def train_logistic_regression_with_loss(X_train, y_train, X_val, y_val,
         lr_model.fit(X_train, y_train)
         losses["iters"].append(cp)
         for name, X, y in [("train", X_train, y_train),
-                           ("val", X_val, y_val),
-                           ("test", X_test, y_test)]:
+                           ("val", X_val, y_val)]:
             proba = lr_model.predict_proba(X)
             losses[name].append(log_loss(y, proba))
         print(f"    LR checkpoint iter={cp} done")
@@ -172,11 +175,10 @@ def train_logistic_regression_with_loss(X_train, y_train, X_val, y_val,
     return lr_model, losses
 
 
-def train_random_forest_with_loss(X_train, y_train, X_val, y_val,
-                                  X_test, y_test):
+def train_random_forest_with_loss(X_train, y_train, X_val, y_val):
     """Train RF incrementally and record log_loss at each n_estimators checkpoint."""
     checkpoints = [10, 25, 50, 75, 100, 150, 200]
-    losses = {"train": [], "val": [], "test": [], "n_estimators": []}
+    losses = {"train": [], "val": [], "n_estimators": []}
 
     rf_model = RandomForestClassifier(
         n_estimators=10, oob_score=True, warm_start=True,
@@ -188,8 +190,7 @@ def train_random_forest_with_loss(X_train, y_train, X_val, y_val,
         rf_model.fit(X_train, y_train)
         losses["n_estimators"].append(cp)
         for name, X, y in [("train", X_train, y_train),
-                           ("val", X_val, y_val),
-                           ("test", X_test, y_test)]:
+                           ("val", X_val, y_val)]:
             proba = rf_model.predict_proba(X)
             losses[name].append(log_loss(y, proba))
         print(f"    RF checkpoint n_estimators={cp} done")
@@ -198,8 +199,7 @@ def train_random_forest_with_loss(X_train, y_train, X_val, y_val,
     return rf_model, losses
 
 
-def train_xgboost_with_loss(X_train, y_train, X_val, y_val,
-                            X_test, y_test):
+def train_xgboost_with_loss(X_train, y_train, X_val, y_val):
     """Train XGBoost with eval_set to track logloss per round."""
     xgb_model = xgb.XGBClassifier(
         n_estimators=200, max_depth=6, learning_rate=0.1,
@@ -208,14 +208,13 @@ def train_xgboost_with_loss(X_train, y_train, X_val, y_val,
     )
     xgb_model.fit(
         X_train, y_train,
-        eval_set=[(X_train, y_train), (X_val, y_val), (X_test, y_test)],
+        eval_set=[(X_train, y_train), (X_val, y_val)],
         verbose=False
     )
     results = xgb_model.evals_result()
     losses = {
         "train": results["validation_0"]["logloss"],
         "val": results["validation_1"]["logloss"],
-        "test": results["validation_2"]["logloss"],
         "rounds": list(range(1, len(results["validation_0"]["logloss"]) + 1)),
     }
     print(f"  XGBoost trained (n_estimators=200)")
@@ -228,10 +227,9 @@ def plot_loss_curves(losses_dict, x_key, x_label, model_name, save=True):
     x = losses_dict[x_key]
     ax.plot(x, losses_dict["train"], label="Train", color="steelblue", lw=2)
     ax.plot(x, losses_dict["val"], label="Validation", color="darkorange", lw=2)
-    ax.plot(x, losses_dict["test"], label="Test", color="green", lw=2)
     ax.set_xlabel(x_label)
     ax.set_ylabel("Log Loss")
-    ax.set_title(f"{model_name} — Loss Curves (Train / Validation / Test)")
+    ax.set_title(f"{model_name} — Loss Curves (Train / Validation)")
     ax.legend()
     ax.grid(alpha=0.3)
     plt.tight_layout()
@@ -340,8 +338,8 @@ def plot_pr_individual(results_dict, save=True):
 # 5. OPTUNA HYPERPARAMETER OPTIMIZATION
 # ──────────────────────────────────────────────────────────────────────
 
-def optuna_xgboost_objective(trial, X_train, y_train, X_val, y_val):
-    """Optuna objective for XGBoost: maximize PR-AUC on validation."""
+def optuna_xgboost_objective(trial, X, y, n_splits=5):
+    """Optuna objective for XGBoost: maximize mean PR-AUC via Stratified K-Fold CV."""
     params = {
         "n_estimators": trial.suggest_int("n_estimators", 100, 1000),
         "max_depth": trial.suggest_int("max_depth", 3, 12),
@@ -357,46 +355,65 @@ def optuna_xgboost_objective(trial, X_train, y_train, X_val, y_val):
         "use_label_encoder": False,
         "verbosity": 0,
     }
-    model = xgb.XGBClassifier(**params)
-    model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
-    y_proba = model.predict_proba(X_val)[:, 1]
-    return average_precision_score(y_val, y_proba)
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+    pr_aucs = []
+    for train_idx, val_idx in skf.split(X, y):
+        X_fold_train, X_fold_val = X.iloc[train_idx], X.iloc[val_idx]
+        y_fold_train, y_fold_val = y.iloc[train_idx], y.iloc[val_idx]
+        model = xgb.XGBClassifier(**params)
+        model.fit(X_fold_train, y_fold_train,
+                  eval_set=[(X_fold_val, y_fold_val)], verbose=False)
+        y_proba = model.predict_proba(X_fold_val)[:, 1]
+        pr_aucs.append(average_precision_score(y_fold_val, y_proba))
+    return np.mean(pr_aucs)
 
 
-def optuna_rf_objective(trial, X_train, y_train, X_val, y_val):
-    """Optuna objective for Random Forest: maximize PR-AUC on validation."""
+def optuna_rf_objective(trial, X, y, n_splits=5):
+    """Optuna objective for Random Forest: maximize mean PR-AUC via Stratified K-Fold CV."""
+    max_depth_choice = trial.suggest_categorical("max_depth", [None, 10, 20, 30, 40, 50])
     params = {
-        "n_estimators": trial.suggest_int("n_estimators", 100, 300),
-        "max_depth": trial.suggest_int("max_depth", 10, 40),
+        "n_estimators": trial.suggest_int("n_estimators", 100, 500),
+        "max_depth": max_depth_choice,
         "min_samples_split": trial.suggest_int("min_samples_split", 2, 15),
         "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 8),
         "max_features": trial.suggest_categorical("max_features", ["sqrt", "log2"]),
         "random_state": 42,
         "n_jobs": -1,
     }
-    model = RandomForestClassifier(**params)
-    model.fit(X_train, y_train)
-    y_proba = model.predict_proba(X_val)[:, 1]
-    return average_precision_score(y_val, y_proba)
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+    pr_aucs = []
+    for train_idx, val_idx in skf.split(X, y):
+        X_fold_train, X_fold_val = X.iloc[train_idx], X.iloc[val_idx]
+        y_fold_train, y_fold_val = y.iloc[train_idx], y.iloc[val_idx]
+        model = RandomForestClassifier(**params)
+        model.fit(X_fold_train, y_fold_train)
+        y_proba = model.predict_proba(X_fold_val)[:, 1]
+        pr_aucs.append(average_precision_score(y_fold_val, y_proba))
+    return np.mean(pr_aucs)
 
 
-def optuna_lr_objective(trial, X_train, y_train, X_val, y_val):
-    """Optuna objective for Logistic Regression: maximize PR-AUC on validation."""
+def optuna_lr_objective(trial, X, y, n_splits=5):
+    """Optuna objective for Logistic Regression: maximize mean PR-AUC via Stratified K-Fold CV."""
     params = {
         "C": trial.suggest_float("C", 1e-4, 100.0, log=True),
         "solver": trial.suggest_categorical("solver", ["saga", "lbfgs"]),
         "max_iter": trial.suggest_int("max_iter", 500, 2000),
         "random_state": 42,
     }
-    model = LogisticRegression(**params)
-    model.fit(X_train, y_train)
-    y_proba = model.predict_proba(X_val)[:, 1]
-    return average_precision_score(y_val, y_proba)
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+    pr_aucs = []
+    for train_idx, val_idx in skf.split(X, y):
+        X_fold_train, X_fold_val = X.iloc[train_idx], X.iloc[val_idx]
+        y_fold_train, y_fold_val = y.iloc[train_idx], y.iloc[val_idx]
+        model = LogisticRegression(**params)
+        model.fit(X_fold_train, y_fold_train)
+        y_proba = model.predict_proba(X_fold_val)[:, 1]
+        pr_aucs.append(average_precision_score(y_fold_val, y_proba))
+    return np.mean(pr_aucs)
 
 
-def run_optuna_optimization(best_model_name, X_train, y_train, X_val, y_val,
-                            n_trials=100):
-    """Run Optuna Bayesian optimization for the best model."""
+def run_optuna_optimization(best_model_name, X, y, n_trials=50):
+    """Run Optuna Bayesian optimization with Stratified K-Fold CV."""
     objectives = {
         "XGBoost": optuna_xgboost_objective,
         "Random Forest": optuna_rf_objective,
@@ -407,10 +424,10 @@ def run_optuna_optimization(best_model_name, X_train, y_train, X_val, y_val,
     study = optuna.create_study(direction="maximize",
                                 study_name=f"{best_model_name}_optimization")
     study.optimize(
-        lambda trial: objective_fn(trial, X_train, y_train, X_val, y_val),
+        lambda trial: objective_fn(trial, X, y),
         n_trials=n_trials,
         show_progress_bar=True,
-        timeout=1800,  # 30 min max
+        timeout=3600,  # 60 min max
     )
 
     print(f"\n{'='*60}")
@@ -491,15 +508,15 @@ def run_full_pipeline():
 
     print("\n[1/3] Training Logistic Regression...")
     lr_model, lr_losses = train_logistic_regression_with_loss(
-        X_train, y_train, X_val, y_val, X_test, y_test)
+        X_train, y_train, X_val, y_val)
 
     print("[2/3] Training Random Forest...")
     rf_model, rf_losses = train_random_forest_with_loss(
-        X_train, y_train, X_val, y_val, X_test, y_test)
+        X_train, y_train, X_val, y_val)
 
     print("[3/3] Training XGBoost...")
     xgb_model, xgb_losses = train_xgboost_with_loss(
-        X_train, y_train, X_val, y_val, X_test, y_test)
+        X_train, y_train, X_val, y_val)
 
     models = {
         "Logistic Regression": lr_model,
@@ -587,8 +604,13 @@ def run_full_pipeline():
     print("\n" + "="*60)
     print("  OPTUNA HYPERPARAMETER OPTIMIZATION")
     print("="*60)
-    study = run_optuna_optimization(best_model_name, X_train, y_train,
-                                    X_val, y_val, n_trials=30)
+    # Load original (non-SMOTE) training data for K-Fold CV evaluation
+    train_orig_df = pd.read_parquet(os.path.join(DATA_DIR, "train_original.parquet"))
+    X_train_orig = train_orig_df.drop(columns=[TARGET])
+    y_train_orig = train_orig_df[TARGET]
+
+    study = run_optuna_optimization(best_model_name, X_train_orig, y_train_orig,
+                                    n_trials=50)
 
     # Train optimized model
     optimized_model = train_optimized_model(best_model_name,
@@ -645,6 +667,38 @@ def run_full_pipeline():
         print(f"    {k}: {v}")
     print(f"    PR-AUC (Optuna best trial): {study.best_value:.6f}")
     print(f"    PR-AUC (Test set):           {opt_res['pr_auc']:.6f}")
+
+    # ── Save models & artifacts ───────────────────────────────────────
+    model_output_dir = os.path.join(OUTPUT_DIR, "models")
+    os.makedirs(model_output_dir, exist_ok=True)
+
+    for name, mdl in models.items():
+        fname = name.lower().replace(" ", "_")
+        joblib.dump(mdl, os.path.join(model_output_dir, f"{fname}.joblib"))
+    joblib.dump(optimized_model, os.path.join(model_output_dir, "optimized_model.joblib"))
+
+    # Save scaler (fit on original unscaled training data)
+    from sklearn.preprocessing import StandardScaler
+    cols_to_scale = [
+        "Amount", "Time", "Time_in_day", "Amount_log",
+        "Time_Amount", "Time_Amount_sq", "Amount_per_Time",
+    ]
+    train_original = pd.read_parquet(os.path.join(DATA_DIR, "train_original.parquet"))
+    scaler_obj = StandardScaler()
+    scaler_obj.fit(train_original[cols_to_scale])
+    joblib.dump(scaler_obj, os.path.join(model_output_dir, "scaler.joblib"))
+
+    # Save model config (threshold, best model info)
+    model_config = {
+        "best_threshold": float(best_t_opt),
+        "best_model": best_model_name,
+        "best_params": {k: (v if isinstance(v, (int, float, str, bool)) else str(v))
+                        for k, v in study.best_params.items()},
+    }
+    with open(os.path.join(model_output_dir, "model_config.json"), "w") as f:
+        json.dump(model_config, f, indent=2)
+
+    print(f"\n  Models, scaler, and config saved to {model_output_dir}")
 
     return {
         "models": models,

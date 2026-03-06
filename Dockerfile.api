@@ -15,12 +15,11 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Python deps
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements-api.txt .
+RUN pip install --no-cache-dir -r requirements-api.txt
 
 # Copy application code
 COPY api/ api/
-COPY training.py .
 
 # Copy model artifacts
 COPY outputs/models/ outputs/models/
@@ -28,7 +27,7 @@ COPY outputs/models/ outputs/models/
 # Copy processed data (needed for scaler fallback)
 COPY Data/processed/train_original.parquet Data/processed/train_original.parquet
 
-# Copy MLflow registry data
+# Copy MLflow registry data (for dynamic version & model loading)
 COPY mlruns/ mlruns/
 
 EXPOSE 8000

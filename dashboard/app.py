@@ -61,11 +61,37 @@ page = st.sidebar.radio(
 # ──────────────────────────────────────────────────────────────────────
 
 
-@st.cache_data
+@st.cache_data(ttl=300)
 def load_metrics():
     """Load the final model comparison CSV."""
     path = os.path.join(OUTPUT_DIR, "final_comparison.csv")
     return pd.read_csv(path)
+
+
+@st.cache_data(ttl=300)
+def load_model_config():
+    """Load model config (version, threshold, best params)."""
+    import json
+    config_path = os.path.join(MODEL_DIR, "model_config.json")
+    if os.path.exists(config_path):
+        with open(config_path) as f:
+            return json.load(f)
+    return {}
+
+
+@st.cache_data(ttl=300)
+def load_registry_version():
+    """Read production model version from MLflow registry."""
+    try:
+        import mlflow
+        mlruns_dir = os.path.join(BASE_DIR, "mlruns")
+        tracking_uri = f"file:///{mlruns_dir.replace(os.sep, '/')}"
+        mlflow.set_tracking_uri(tracking_uri)
+        client = mlflow.tracking.MlflowClient()
+        mv = client.get_model_version_by_alias("CreditCardFraudDetector", "production")
+        return str(mv.version)
+    except Exception:
+        return "?"  
 
 
 @st.cache_data
@@ -127,6 +153,18 @@ def load_shap_artifacts():
 
 if page == "Model Metrikleri":
     st.title("📈 Model Performans Özeti")
+
+    # Model version & config info
+    config = load_model_config()
+    registry_ver = load_registry_version()
+
+    v1, v2, v3 = st.columns(3)
+    v1.info(f"📦 **MLflow Registry Versiyon:** {registry_ver}")
+    v2.info(f"🎯 **Threshold:** {config.get('best_threshold', '?')}")
+    best_params = config.get("best_params", {})
+    params_str = ", ".join(f"{k}={v}" for k, v in best_params.items()) if best_params else "?"
+    v3.info(f"⚙️ **Optimized Params:** {params_str}")
+
     st.markdown("Tüm modellerin test seti üzerindeki karşılaştırmalı metrikleri.")
 
     df = load_metrics()
@@ -283,6 +321,13 @@ elif page == "SHAP Feature Importance":
 
 elif page == "Canlı Test Paneli":
     st.title("🧪 Canlı Fraud Testi")
+
+    config = load_model_config()
+    registry_ver = load_registry_version()
+    st.caption(
+        f"Model v{registry_ver} · Threshold: {config.get('best_threshold', '?')} · "
+        f"API: `{API_URL}`"
+    )
     st.markdown(
         f"Aşağıdaki alanları doldurup **Tahmin Et** butonuna basın. "
         f"API'ye (`{API_URL}/predict`) istek gönderilir ve sonuç ekranda gösterilir."
